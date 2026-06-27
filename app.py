@@ -1,45 +1,94 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-# Mudamos para o conector nativo e oficial da Groq
 from langchain_groq import ChatGroq
+# Importações modernas de memória e templates do LangChain
+from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.messages import HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-# 1. Carrega a chave secreta do arquivo .env com total segurança
+# ##############################################################################
+# 1. ARQUITETURA DE NEGÓCIO: BANCO DE MEMÓRIA GLOBAL (ESCALÁVEL PARA WHATSAPP)
+# ##############################################################################
+if "banco_de_memorias" not in st.session_state:
+    st.session_state.banco_de_memorias = {}
+
+def obter_historico_sessao(session_id: str) -> BaseChatMessageHistory:
+    """Recupera o histórico exclusivo de cada cliente com base no ID da sessão."""
+    if session_id not in st.session_state.banco_de_memorias:
+        st.session_state.banco_de_memorias[session_id] = InMemoryChatMessageHistory()
+    return st.session_state.banco_de_memorias[session_id]
+
+# ##############################################################################
+# 2. INICIALIZAÇÃO DO CORE DE INTELIGÊNCIA ARTIFICIAL E PROMPT
+# ##############################################################################
 load_dotenv()
 
-# 2. Configura a página web do seu Agente
-st.set_page_config(page_title="Agente Inteligente", page_icon="🤖")
-
-st.title("🤖 Meu Primeiro Agente de IA")
-st.write("---")
-st.write("Bem-vindo! Pergunte qualquer coisa e eu responderei usando inteligência artificial de alta velocidade.")
-
-# 3. LIGA O CÉREBRO DO ROBÔ (Usando o conector direto e oficial da Groq)
 @st.cache_resource
 def inicializar_ia():
     chave_secreta = os.getenv("GROQ_API_KEY")
-    
-    # Atualizado para o modelo ativo e ultraveloz da Groq
-    return ChatGroq(
+    modelo = ChatGroq(
         model="llama-3.1-8b-instant",
-        groq_api_key=chave_secreta
+        groq_api_key=chave_secreta,
+        temperature=0.3
     )
-
+    
+    # Criamos o esqueleto do chat: System Prompt + Histórico + Nova Pergunta
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Você é um atendente comercial inteligente e prestativo focado em ajudar clientes pelo WhatsApp de forma clara, objetiva e profissional."),
+        MessagesPlaceholder(variable_name="history"),
+        ("human", "{input}")
+    ])
+    
+    # Encadeia o prompt ao modelo de linguagem
+    cadeia_ia = prompt | modelo
+    
+    # Envelopa toda a estrutura com o motor de gerenciamento de histórico
+    modelo_com_memoria = RunnableWithMessageHistory(
+        cadeia_ia,
+        get_session_history=obter_historico_sessao,
+        input_messages_key="input",
+        history_messages_key="history"
+    )
+    return modelo_com_memoria
 
 cerebro_ia = inicializar_ia()
 
-# 4. Caixinha de chat para o usuário digitar
-comando_usuario = st.chat_input("Digite sua mensagem para o agente...")
+# ##############################################################################
+# 3. INTERFACE DE TESTES DO PRODUTO (STREAMLIT)
+# ##############################################################################
+st.set_page_config(page_title="Agente Comercial Core", page_icon="🤖")
+st.title("🤖 Atendente Inteligente - Core v1.0")
+st.write("---")
+
+# ID de simulação de um cliente do WhatsApp
+ID_CLIENTE_WHATSAPP = "cliente_teste_vagner"
+
+# Recupera o histórico do cliente ativo
+historico_atual = obter_historico_sessao(ID_CLIENTE_WHATSAPP)
+
+# Renderiza as conversas antigas mantendo a interface limpa
+for msg in historico_atual.messages:
+    tipo_usuario = "user" if isinstance(msg, HumanMessage) else "assistant"
+    with st.chat_message(tipo_usuario):
+        st.write(msg.content)
+
+# Entrada de dados do usuário
+comando_usuario = st.chat_input("Digite sua mensagem para o atendente comercial...")
 
 if comando_usuario:
-    # Mostra o que você digitou na tela
+    # Exibe a pergunta do usuário na interface
     with st.chat_message("user"):
         st.write(comando_usuario)
-        
-    # Aciona a Inteligência Artificial para pensar e responder em tempo real
+
+    # Aciona a IA para processar a resposta consultando a memória do ID passado
     with st.chat_message("assistant"):
-        with st.spinner("Pensando..."):
-            # Envia a pergunta diretamente para os servidores da Groq
-            resposta_da_ia = cerebro_ia.invoke(comando_usuario)
-            # Imprime a resposta inteligente do robô na tela
+        with st.spinner("Respondendo ao cliente..."):
+            
+            resposta_da_ia = cerebro_ia.invoke(
+                {"input": comando_usuario},
+                config={"configurable": {"session_id": ID_CLIENTE_WHATSAPP}}
+            )
+            
             st.write(resposta_da_ia.content)
